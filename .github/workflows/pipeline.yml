@@ -1,60 +1,56 @@
-name: RES Pipeline
+name: Build & Release
 
 on:
   push:
     branches:
-    - master
+      - feat/userscript-build-target
     tags:
-      - v*.*.*
+      - v*.*.*-userscript
   pull_request:
 
 jobs:
-  lint_flow:
+  lint:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-    - run: yarn install --frozen-lockfile
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: yarn install --frozen-lockfile
+      - run: yarn flow check --show-all-errors
+      - run: yarn eslint
+      - run: yarn stylelint
 
-    - run: yarn flow check --show-all-errors
-    - run: yarn eslint
-    - run: yarn stylelint
-    - run: yarn i18n-lint
-
-  build_deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-    - run: yarn install --frozen-lockfile
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: yarn install --frozen-lockfile
+      - run: yarn build --browsers=userscript
 
-    - run: yarn build --browsers=all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: userscript
+          path: dist/userscript/reddit-enhancement-suite.user.js
 
-    - uses: softprops/action-gh-release@v2
-      if: startsWith(github.ref, 'refs/tags/')
-      with:
-        files: |
-          dist/zip/chrome.zip
-          dist/zip/chromebeta.zip
-          dist/zip/edge.zip
-          dist/zip/firefox.zip
-          dist/zip/opera.zip
-        prerelease: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/userscript/reddit-enhancement-suite.user.js
+            dist/userscript/reddit-enhancement-suite.meta.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  windows:
-    runs-on: windows-latest
+  test:
+    runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-    - run: yarn install --frozen-lockfile
-
-    - run: yarn test
-    - run: yarn build --browsers=all
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: yarn install --frozen-lockfile
+      - run: yarn test

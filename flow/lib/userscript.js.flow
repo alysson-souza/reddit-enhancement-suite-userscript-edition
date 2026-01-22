@@ -1,0 +1,41 @@
+/* @flow */
+
+declare class BroadcastChannel {
+	constructor(name: string): void;
+	name: string;
+	onmessage: ?((event: MessageEvent) => mixed);
+	onmessageerror: ?((event: MessageEvent) => mixed);
+	postMessage(message: mixed): void;
+	close(): void;
+}
+
+declare function GM_getValue(key: string, defaultValue?: mixed): mixed;
+declare function GM_setValue(key: string, value: mixed): void;
+declare function GM_deleteValue(key: string): void;
+declare function GM_listValues(): string[];
+declare function GM_xmlhttpRequest(details: {|
+	method: string,
+	url: string,
+	headers?: { [string]: string },
+	data?: ?string,
+	anonymous?: boolean,
+	onload?: (response: {|
+		status: number,
+		statusText: string,
+		responseHeaders: string,
+		responseText: string,
+		finalUrl: string,
+	|}) => void,
+	onerror?: (response: {| statusText?: string |}) => void,
+	ontimeout?: () => void,
+|}): void;
+declare function GM_openInTab(url: string, options?: {|
+	active?: boolean,
+	insert?: boolean,
+	setParent?: boolean,
+|}): { close: () => void };
+declare function GM_download(details: {|
+	url: string,
+	name: string,
+|}): void;
+declare function GM_addStyle(css: string): void;

@@ -12,6 +12,7 @@ import { copy } from 'esbuild-plugin-copy';
 import { sassPlugin } from 'esbuild-sass-plugin';
 import isBetaVersion from './build/isBetaVersion.js';
 import packageInfo from './package.json' with { type: 'json' };
+import { generateMetaBlock, generateMetaOnlyBlock } from './userscript/meta.js';
 
 const targets = {
 	chrome: {
@@ -41,6 +42,11 @@ const targets = {
 		browserMobileMinVersion: '120.0',
 		manifest: './firefox/manifest.json',
 		noSourcemap: true,
+	},
+	userscript: {
+		browserName: 'userscript',
+		browserMinVersion: '114.0',
+		isUserscript: true,
 	},
 }
 
@@ -74,7 +80,129 @@ const homepageURL /*: string */ = packageInfo.homepage;
 // production builds uses version number to keep the build reproducible
 const buildToken = isProduction ? version : devBuildToken;
 
-async function buildForBrowser(targetName, { manifest, noSourceMap, browserName, browserMinVersion, browserMobileMinVersion }) {
+async function buildForUserscript(targetName) {
+	const outdir = `./dist/${targetName}/`;
+	const jsOutfile = `${outdir}reddit-enhancement-suite.js`;
+	const userscriptOutfile = `${outdir}reddit-enhancement-suite.user.js`;
+	const metaOutfile = `${outdir}reddit-enhancement-suite.meta.js`;
+
+	await fs.promises.mkdir(outdir, { recursive: true });
+
+	const context = {
+		entryPoints: {
+			'reddit-enhancement-suite': './lib/userscript.entry.js',
+			res: './lib/css/res.scss',
+			options: './lib/options/options.scss',
+		},
+		outdir,
+		bundle: true,
+		format: 'iife',
+		treeShaking: true,
+		minify: isProduction,
+		drop: isProduction ? ['console', 'debugger'] : [],
+		legalComments: isProduction ? 'none' : 'inline',
+		metafile: true,
+		target: ['chrome114', 'firefox115'],
+		loader: {
+			'.svg': 'dataurl',
+			'.gif': 'dataurl',
+			'.png': 'dataurl',
+			'.woff': 'dataurl',
+		},
+		define: {
+			'process.env.BUILD_TARGET': '"userscript"',
+			'process.env.NODE_ENV': `"${options.mode}"`,
+			'process.env.buildToken': `"${buildToken}"`,
+			'process.env.announcementsSubreddit': `"${announcementsSubreddit}"`,
+			'process.env.name': `"${name}"`,
+			'process.env.author': `"${author}"`,
+			'process.env.description': `"${description}"`,
+			'process.env.version': `"${version}"`,
+			'process.env.isBeta': `"${isBeta.toString()}"`,
+			'process.env.isPatch': `"${isPatch.toString()}"`,
+			'process.env.isMinor': `"${isMinor.toString()}"`,
+			'process.env.isMajor': `"${isMajor.toString()}"`,
+			'process.env.updatedURL': `"${updatedURL}"`,
+			'process.env.homepageURL': `"${homepageURL}"`,
+		},
+		plugins: [
+			{
+				name: 'userscript-locale-redirect',
+				setup(build) {
+					build.onResolve({ filter: /^\.\/locales$/ }, args => {
+						if (args.importer.endsWith('locales/index.js') || args.importer.endsWith('locales\\index.js')) {
+							return { path: path.resolve('./locales/locales/index.userscript.js') };
+						}
+					});
+				},
+			},
+			{
+				name: 'remove-flow-types',
+				setup(build) {
+					build.onLoad({ filter: /\.m?js$/ }, async args => {
+						const text = await fs.promises.readFile(args.path, 'utf8')
+						const contents = flowRemoveTypes(text, { pretty: true }).toString();
+						return {
+							contents,
+							loader: 'js',
+						}
+					})
+				},
+			},
+			sassPlugin(),
+			{
+				name: 'combine-userscript',
+				setup(build) {
+					build.onEnd(async () => {
+						const metaBlock = generateMetaBlock();
+						const metaOnlyBlock = generateMetaOnlyBlock();
+
+						const jsContent = await fs.promises.readFile(jsOutfile, 'utf8');
+
+						const resCss = await fs.promises.readFile(`${outdir}res.css`, 'utf8').catch(() => '');
+						const optionsCss = await fs.promises.readFile(`${outdir}options.css`, 'utf8').catch(() => '');
+						const cssContent = `${resCss }\n${ optionsCss}`;
+
+						const cssInjection = `
+(function() {
+	const style = document.createElement('style');
+	style.type = 'text/css';
+	style.textContent = ${JSON.stringify(cssContent)};
+	(document.head || document.documentElement).appendChild(style);
+})();
+`;
+
+						const finalCode = `${metaBlock }\n${ cssInjection }\n${ jsContent}`;
+						await fs.promises.writeFile(userscriptOutfile, finalCode);
+						await fs.promises.writeFile(metaOutfile, metaOnlyBlock);
+
+						await fs.promises.unlink(jsOutfile).catch(() => {});
+						await fs.promises.unlink(`${outdir}res.css`).catch(() => {});
+						await fs.promises.unlink(`${outdir}options.css`).catch(() => {});
+
+						console.log(`Userscript written to ${userscriptOutfile}`);
+					});
+				},
+			},
+		],
+	};
+
+	if (options.watch) {
+		console.log(`Watching ${targetName}; break to exit`);
+		const ctx = await esbuild.context(context);
+		await ctx.watch();
+	} else {
+		console.log(`building ${targetName}`);
+		const result = await esbuild.build(context);
+		fs.writeFileSync(`dist/esbuild-meta-${targetName}.json`, JSON.stringify(result.metafile));
+	}
+}
+
+async function buildForBrowser(targetName, { manifest, noSourceMap, browserName, browserMinVersion, browserMobileMinVersion, isUserscript }) {
+	if (isUserscript) {
+		return buildForUserscript(targetName);
+	}
+
 	const context = {
 		entryPoints: {
 			'foreground.entry': './lib/foreground.entry.js',
@@ -160,7 +288,7 @@ async function buildForBrowser(targetName, { manifest, noSourceMap, browserName,
 						Object.keys(replace).forEach(v => {
 							text = text.replaceAll(v, replace[v]);
 						});
-						JSON.parse(text); // Check if resulting JSON is valid
+						JSON.parse(text);
 						return { contents: text, loader: 'copy' };
 					});
 				},
